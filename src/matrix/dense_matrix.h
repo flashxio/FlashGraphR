@@ -148,6 +148,8 @@ public:
 	virtual ~dense_matrix() {
 	}
 
+	std::shared_ptr<vector> conv2vec() const;
+
 	const detail::matrix_store &get_data() const {
 		return *store;
 	}
@@ -220,6 +222,21 @@ public:
 	 */
 	virtual dense_matrix::ptr get_cols(std::shared_ptr<col_vec> idxs) const;
 	virtual dense_matrix::ptr get_rows(std::shared_ptr<col_vec> idxs) const;
+
+	/*
+	 * This method creates a new matrix whose columns specified by `idxs' are
+	 * replaced by `cols'. This works only for a tall matrix. It returns NULL
+	 * on a wide matrix.
+	 */
+	virtual dense_matrix::ptr set_cols(const std::vector<off_t> &idxs,
+			dense_matrix::ptr cols);
+	/*
+	 * This method creates a new matrix whose rows specified by `idxs' are
+	 * replaced by `rows'. This works only for a wide matrix. It returns NULL
+	 * on a tall matrix.
+	 */
+	virtual dense_matrix::ptr set_rows(const std::vector<off_t> &idxs,
+			dense_matrix::ptr rows);
 
 	/*
 	 * Clone the matrix.
