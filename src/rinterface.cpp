@@ -24,7 +24,6 @@
 #include "safs_file.h"
 #include "io_interface.h"
 
-#include "matrix/FG_sparse_matrix.h"
 #include "matrix/kmeans.h"
 #include "libgraph-algs/sem_kmeans.h"
 
@@ -36,6 +35,7 @@
 #include "mem_vec_store.h"
 #include "data_frame.h"
 #include "data_io.h"
+#include "sparse_matrix.h"
 
 #include "rutils.h"
 
@@ -568,12 +568,20 @@ RcppExport SEXP R_FG_load_graph_el_df(SEXP pgraph_name, SEXP pedge_lists,
  * Load a graph from edge lists in a file.
  */
 RcppExport SEXP R_FG_load_graph_el(SEXP pgraph_name, SEXP pgraph_file,
-		SEXP pdirected)
+		SEXP pdirected, SEXP pin_mem, SEXP pdelim, SEXP pattr_type)
 {
 	Rcpp::LogicalVector res(1);
 	std::string graph_name = CHAR(STRING_ELT(pgraph_name, 0));
 	std::string graph_file = CHAR(STRING_ELT(pgraph_file, 0));
-	bool directed = INTEGER(pdirected)[0];
+	bool directed = LOGICAL(pdirected)[0];
+	bool in_mem = LOGICAL(pin_mem)[0];
+	std::string delim = CHAR(STRING_ELT(pdelim, 0));
+	std::string attr_type = CHAR(STRING_ELT(pattr_type, 0));
+
+	if (!in_mem && !is_safs_init()) {
+		fprintf(stderr, "SAFS isn't initialized\n");
+		return R_NilValue;
+	}
 
 	native_file f(graph_file);
 	if (!f.exist()) {
@@ -584,7 +592,10 @@ RcppExport SEXP R_FG_load_graph_el(SEXP pgraph_name, SEXP pgraph_file,
 	std::vector<std::string> edge_list_files(1);
 	edge_list_files[0] = graph_file;
 	// TODO give more options when loading an edge list.
-	fm::data_frame::ptr df = utils::read_edge_list(edge_list_files, true, ",", "");
+	fm::data_frame::ptr df = utils::read_edge_list(edge_list_files, in_mem,
+			delim, attr_type, directed);
+	if (df == NULL)
+		return R_NilValue;
 	edge_list::ptr el = edge_list::create(df, directed);
 	FG_graph::ptr fg = create_fg_graph("graph_name", el);
 
@@ -797,71 +808,6 @@ RcppExport SEXP R_FG_compute_overlap(SEXP graph, SEXP _vids)
 	return res;
 }
 
-/*
- * Generate an induced subgraph from a graph, given a list of vertices,
- * and convert it into an edge list.
- */
-RcppExport SEXP R_FG_fetch_subgraph_el(SEXP graph, SEXP pvertices)
-{
-	Rcpp::IntegerVector vertices(pvertices);
-	if (vertices.length() == 0) {
-		fprintf(stderr, "There aren't vertices to fetch\n");
-		return R_NilValue;
-	}
-	std::vector<vertex_id_t> vids(vertices.begin(), vertices.end());
-	FG_graph::ptr fg = R_FG_get_graph(graph);
-	vertex_id_t max_vid = fg->get_graph_header().get_num_vertices() - 1;
-	BOOST_FOREACH(vertex_id_t vid, vids) {
-		if (vid > max_vid) {
-			fprintf(stderr, "invalid vertex id: %d\n", vid);
-			return R_NilValue;
-		}
-	}
-
-	in_mem_subgraph::ptr subg = fetch_subgraph(fg, vids);
-	subg->compress();
-	assert(subg->get_num_vertices() == vids.size());
-	Rcpp::IntegerVector s_vs(subg->get_num_edges());
-	Rcpp::IntegerVector d_vs(subg->get_num_edges());
-	size_t num_tot_edges = 0;
-	BOOST_FOREACH(vertex_id_t id, vids) {
-		const in_mem_vertex &v = subg->get_vertex(id);
-		if (v.has_edge_data())
-			ABORT_MSG("we can't fetch a subgraph from a graph with attributes");
-		if (subg->is_directed()) {
-			const in_mem_directed_vertex<> &dv
-				= (const in_mem_directed_vertex<> &) v;
-			size_t num_edges = dv.get_num_out_edges();
-			for (size_t i = 0; i < num_edges; i++) {
-				edge<> e = dv.get_out_edge(i);
-				s_vs[num_tot_edges] = e.get_from();
-				d_vs[num_tot_edges] = e.get_to();
-				num_tot_edges++;
-			}
-		}
-		else {
-			const in_mem_undirected_vertex<> &un_v
-				= (const in_mem_undirected_vertex<> &) v;
-			size_t num_edges = un_v.get_num_edges();
-			for (size_t i = 0; i < num_edges; i++) {
-				edge<> e = un_v.get_edge(i);
-				// each edge appears twice in an undirected graph.
-				// we only need to store one.
-				if (e.get_from() <= e.get_to()) {
-					s_vs[num_tot_edges] = e.get_from();
-					d_vs[num_tot_edges] = e.get_to();
-					num_tot_edges++;
-				}
-			}
-		}
-	}
-	assert(s_vs.size() == num_tot_edges);
-	Rcpp::List ret;
-	ret["src"] = s_vs;
-	ret["dst"] = d_vs;
-	return ret;
-}
-
 RcppExport SEXP R_FG_fetch_subgraph(SEXP graph, SEXP pvertices, SEXP pname,
 		SEXP pcompress)
 {
@@ -873,6 +819,7 @@ RcppExport SEXP R_FG_fetch_subgraph(SEXP graph, SEXP pvertices, SEXP pname,
 		return R_NilValue;
 	}
 	std::vector<vertex_id_t> vids(vertices.begin(), vertices.end());
+
 	FG_graph::ptr fg = R_FG_get_graph(graph);
 	vertex_id_t max_vid = fg->get_graph_header().get_num_vertices() - 1;
 	BOOST_FOREACH(vertex_id_t vid, vids) {
@@ -882,12 +829,7 @@ RcppExport SEXP R_FG_fetch_subgraph(SEXP graph, SEXP pvertices, SEXP pname,
 		}
 	}
 
-	in_mem_subgraph::ptr subg = fetch_subgraph(fg, vids);
-	assert(subg->get_num_vertices() == vids.size());
-	std::pair<in_mem_graph::ptr, vertex_index::ptr> gpair
-		= subg->serialize(graph_name, compress);
-	FG_graph::ptr sub_fg = FG_graph::create(gpair.first, gpair.second,
-			graph_name, configs);
+	FG_graph::ptr sub_fg = fetch_subgraph(fg, vids, graph_name, compress);
 	graph_ref *ref = register_in_mem_graph(sub_fg, graph_name);
 	if (ref)
 		return create_FGR_obj(ref);
@@ -919,36 +861,6 @@ FG_vector<double>::ptr multiply_v(FG_graph::ptr fg, bool transpose,
 	FG_vector<double>::ptr out_vec = FG_vector<double>::create(length);
 	matrix->multiply(*in_vec, *out_vec);
 	return out_vec;
-}
-
-RcppExport SEXP R_FG_multiply_v(SEXP graph, SEXP pvec, SEXP ptranspose)
-{
-	bool transpose = INTEGER(ptranspose)[0];
-	Rcpp::NumericVector vec(pvec);
-	size_t length = vec.size();
-	FG_vector<double>::ptr in_vec = FG_vector<double>::create(length);
-	for (size_t i = 0; i < length; i++) {
-		in_vec->get_data()[i] = vec[i];
-	}
-	FG_graph::ptr fg = R_FG_get_graph(graph);
-	FG_vector<double>::ptr out_vec;
-	if (!fg->get_graph_header().has_edge_data())
-		out_vec = multiply_v<FG_adj_matrix>(fg, transpose, in_vec);
-	// I assume the edge weight is integer.
-	else if (fg->get_graph_header().get_edge_data_size() == 4)
-		out_vec = multiply_v<FG_sparse_matrix<int32_t> >(
-				fg, transpose, in_vec);
-	// I assume the edge weight is double
-	else if (fg->get_graph_header().get_edge_data_size() == 8)
-		out_vec = multiply_v<FG_sparse_matrix<double> >(
-				fg, transpose, in_vec);
-	else {
-		fprintf(stderr, "wrong edge weight size: %d\n",
-				fg->get_graph_header().get_edge_data_size());
-		return R_NilValue;
-	}
-	Rcpp::NumericVector ret(out_vec->get_data(), out_vec->get_data() + length);
-	return ret;
 }
 
 RcppExport SEXP R_FG_kmeans(SEXP pmat, SEXP pk, SEXP pmax_iters, SEXP pmax_threads, SEXP pinit)
@@ -1062,4 +974,23 @@ RcppExport SEXP R_FG_compute_betweenness(SEXP graph, SEXP _vids)
 	Rcpp::NumericVector res(fg_vec->get_size());
 	fg_vec->copy_to(res.begin(), fg_vec->get_size());
 	return res;
+}
+
+SEXP create_FMR_matrix(fm::sparse_matrix::ptr m, const std::string &name);
+
+namespace fg
+{
+fm::sparse_matrix::ptr create_sparse_matrix(FG_graph::ptr fg,
+		const fm::scalar_type *entry_type);
+}
+
+RcppExport SEXP R_FG_get_matrix_fg(SEXP pgraph)
+{
+	Rcpp::List graph = Rcpp::List(pgraph);
+	Rcpp::LogicalVector res(1);
+	fg::FG_graph::ptr fg = R_FG_get_graph(pgraph);
+	// TODO does this work if this isn't a binary matrix?
+	fm::sparse_matrix::ptr m = fg::create_sparse_matrix(fg, NULL);
+	std::string name = graph["name"];
+	return create_FMR_matrix(m, name);
 }

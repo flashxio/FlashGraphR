@@ -105,6 +105,8 @@ fg.get.params <- function(name)
 #'                   loaded to FlashGraphR.
 #' @param directed   Indicate whether the input graph is directed. This is
 #'                   only used if the input graph use the edge list format.
+#' @param in.mem     Indicate whether to load a graph to SAFS.
+#' @param delim The delimiter of separating elements in the text format.
 #' @return a FlashGraph object.
 #' @name fg.load.graph
 #' @author Da Zheng <dzheng5@@jhu.edu>
@@ -114,11 +116,12 @@ fg.get.params <- function(name)
 #' ig <- read.graph("edge_list.txt")
 #' fg <- fg.load.igraph(ig)
 fg.load.graph <- function(graph, index.file = NULL, graph.name=graph,
-						  directed=TRUE)
+						  directed=TRUE, in.mem=TRUE, delim=",", attr.type="")
 {
 	if (is.null(index.file)) {
 		ret <- .Call("R_FG_load_graph_el", graph.name, graph,
-			  as.logical(directed), PACKAGE="FlashGraphR")
+			  as.logical(directed), as.logical(in.mem), as.character(delim),
+			  as.character(attr.type), PACKAGE="FlashGraphR")
 		if (is.null(ret))
 			ret
 		else
@@ -521,9 +524,6 @@ fg.overlap <- function(graph, vids)
 #' Generate an induced subgraph that contains the specified vertices from
 #' the input given graph.
 #'
-#' `fg.fetch.subgraph.igraph' generates the induced subgraph and converts
-#' it into an iGraph object
-#'
 #' `fg.fetch.subgraph' generates the induced subgraph and returns
 #' a FlashGraph object.
 #'
@@ -533,23 +533,9 @@ fg.overlap <- function(graph, vids)
 #' @param compress This indicates whether to remove empty vertices in
 #'                 the generated subgraph.
 #' @param name The name of the FlashGraph object.
-#' @return `fg.fetch.subgraph.igraph' returns an iGraph object,
-#' `fg.fetch.subgraph' returns a FlashGraph object
+#' @return `fg.fetch.subgraph' returns a FlashGraph object
 #' @name fg.subgraph
 #' @author Da Zheng <dzheng5@@jhu.edu>
-
-#' @rdname fg.subgraph
-fg.fetch.subgraph.igraph <- function(graph, vertices)
-{
-	stopifnot(!is.null(graph))
-	stopifnot(class(graph) == "fg")
-	edge.list = .Call("R_FG_fetch_subgraph_el", graph, vertices,
-					  PACKAGE="FlashGraphR")
-	dframe = data.frame(edge.list$src, edge.list$dst)
-	graph.data.frame(dframe, graph$directed)
-}
-
-#' @rdname fg.subgraph
 fg.fetch.subgraph <- function(graph, vertices,
 							  name = paste(graph$name, "-sub", sep=""), compress=TRUE)
 {
@@ -637,21 +623,30 @@ fg.betweenness <- function(fg, vids=0:(fg$vcount-1))
 	stopifnot(ret)
 }
 
+.new.fm <- function(fm)
+{
+	if (!is.null(fm))
+		new("fm", pointer=fm$pointer, name=fm$name, nrow=fm$nrow, ncol=fm$ncol,
+			type=fm$type, ele_type=fm$ele_type)
+	else
+		NULL
+}
+
 #' Load a sparse matrix to FlashGraphR.
 #'
 #' Load a sparse matrix to FlashGraphR from FlashGraph.
 #' 
-#' `fm.get.sparse.matrix' gets a FlashMatrix sparse matrix that references
+#' `fg.get.sparse.matrix' gets a FlashMatrix sparse matrix that references
 #' a matrix represented by a FlashGraph object.
 #'
 #' @examples
 #' fg <- fg.load.graph("graph.adj", "graph.index")
-#' fm <- fm.get.sparse.matrix(fg)
-fm.get.sparse.matrix <- function(fg)
+#' fm <- fg.get.sparse.matrix(fg)
+fg.get.sparse.matrix <- function(fg)
 {
 	stopifnot(!is.null(fg))
 	stopifnot(class(fg) == "fg")
 	stopifnot(fg.exist.graph(fg$name))
-	m <- .Call("R_FM_get_matrix_fg", fg, PACKAGE="FlashGraphR")
-	new.fm(m)
+	m <- .Call("R_FG_get_matrix_fg", fg, PACKAGE="FlashGraphR")
+	.new.fm(m)
 }
