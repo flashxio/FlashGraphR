@@ -19,9 +19,9 @@ R -e "install.packages("https://github.com/flashxio/FlashGraphR/releases/downloa
 ```
 However, the tar file may contain a less up-to-date version.
 
-**Note: FlashGraphR relies on some Linux packages.** Please follow the instructions
+**Note: FlashGraphR relies on some Linux packages and some R packages.** Please follow the instructions
 [here](https://flashxio.github.io/FlashX-doc/FlashX-Quick-Start-Guide.html)
-for more details of installing the Linux packages and FlashGraphR.
+for more details of installing FlashGraphR.
 
 ## Documentation
 
